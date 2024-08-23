@@ -1,10 +1,10 @@
-#if os(Linux)
-import Glibc
-#endif
-
-#if canImport(Darwin)
-import Darwin
-#endif
+#if canImport(string_h)
+ import string_h
+ #elseif os(Linux)
+ import Glibc
+ #elseif os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
+ import Darwin
+ #endif
 
 /// `StatementAuthorizer` provides information about compiled database
 /// statements, and prevents the truncate optimization when row deletions are
@@ -14,28 +14,28 @@ import Darwin
 /// <https://www.sqlite.org/lang_delete.html#the_truncate_optimization>
 final class StatementAuthorizer {
     private unowned var database: Database
-    
+
     /// What a statement reads.
     var selectedRegion = DatabaseRegion()
-    
+
     /// What a statement writes.
     var databaseEventKinds: [DatabaseEventKind] = []
-    
+
     /// True if a statement alters the schema in a way that requires
     /// invalidation of the schema cache. For example, adding a column to a
     /// table invalidates the schema cache.
     var invalidatesDatabaseSchemaCache = false
-    
+
     /// Not nil if a statement is a BEGIN/COMMIT/ROLLBACK/RELEASE transaction or
     /// savepoint statement.
     var transactionEffect: Statement.TransactionEffect?
-    
+
     private var isDropStatement = false
-    
+
     init(_ database: Database) {
         self.database = database
     }
-    
+
     /// Registers the authorizer with `sqlite3_set_authorizer`.
     func register() {
         let authorizerP = Unmanaged.passUnretained(self).toOpaque()
@@ -49,7 +49,7 @@ final class StatementAuthorizer {
             },
             authorizerP)
     }
-    
+
     /// Reset before compiling a new statement
     func reset() {
         selectedRegion = DatabaseRegion()
@@ -58,7 +58,7 @@ final class StatementAuthorizer {
         transactionEffect = nil
         isDropStatement = false
     }
-    
+
     private func authorize(
         _ actionCode: CInt,
         _ cString1: UnsafePointer<CChar>?,
@@ -73,7 +73,7 @@ final class StatementAuthorizer {
         //     \(AuthorizerActionCode(rawValue: actionCode)) \
         //     \([cString1, cString2, cString3, cString4].compactMap { $0.map(String.init) }.joined(separator: ", "))
         //     """)
-        
+
         switch actionCode {
         case SQLITE_DROP_TABLE, SQLITE_DROP_VTABLE, SQLITE_DROP_TEMP_TABLE,
              SQLITE_DROP_INDEX, SQLITE_DROP_TEMP_INDEX,
@@ -82,7 +82,7 @@ final class StatementAuthorizer {
             isDropStatement = true
             invalidatesDatabaseSchemaCache = true
             return SQLITE_OK
-            
+
         case SQLITE_ATTACH, SQLITE_DETACH, SQLITE_ALTER_TABLE,
              SQLITE_CREATE_INDEX, SQLITE_CREATE_TABLE,
              SQLITE_CREATE_TEMP_INDEX, SQLITE_CREATE_TEMP_TABLE,
@@ -91,7 +91,7 @@ final class StatementAuthorizer {
              SQLITE_CREATE_VTABLE:
             invalidatesDatabaseSchemaCache = true
             return SQLITE_OK
-            
+
         case SQLITE_READ:
             guard let tableName = cString1.map(String.init) else { return SQLITE_OK }
             guard let columnName = cString2.map(String.init) else { return SQLITE_OK }
@@ -103,26 +103,26 @@ final class StatementAuthorizer {
                 selectedRegion.formUnion(DatabaseRegion(table: tableName, columns: [columnName]))
             }
             return SQLITE_OK
-            
+
         case SQLITE_INSERT:
             guard let tableName = cString1.map(String.init) else { return SQLITE_OK }
             databaseEventKinds.append(.insert(tableName: tableName))
             return SQLITE_OK
-            
+
         case SQLITE_DELETE:
             if isDropStatement { return SQLITE_OK }
             guard let cString1 else { return SQLITE_OK }
-            
+
             // Deletions from sqlite_master and sqlite_temp_master are not like
             // other deletions: `sqlite3_update_hook` does not notify them, and
             // they are prevented when the truncate optimization is disabled.
             // Let's always authorize such deletions by returning SQLITE_OK:
             guard strcmp(cString1, "sqlite_master") != 0 else { return SQLITE_OK }
             guard strcmp(cString1, "sqlite_temp_master") != 0 else { return SQLITE_OK }
-            
+
             let tableName = String(cString: cString1)
             databaseEventKinds.append(.delete(tableName: tableName))
-            
+
             if let observationBroker = database.observationBroker,
                observationBroker.observesDeletions(on: tableName)
             {
@@ -133,13 +133,13 @@ final class StatementAuthorizer {
             } else {
                 return SQLITE_OK
             }
-            
+
         case SQLITE_UPDATE:
             guard let tableName = cString1.map(String.init) else { return SQLITE_OK }
             guard let columnName = cString2.map(String.init) else { return SQLITE_OK }
             insertUpdateEventKind(tableName: tableName, columnName: columnName)
             return SQLITE_OK
-            
+
         case SQLITE_TRANSACTION:
             guard let cString1 else { return SQLITE_OK }
             if strcmp(cString1, "BEGIN") == 0 {
@@ -150,7 +150,7 @@ final class StatementAuthorizer {
                 transactionEffect = .rollbackTransaction
             }
             return SQLITE_OK
-            
+
         case SQLITE_SAVEPOINT:
             guard let cString1 else { return SQLITE_OK }
             guard let name = cString2.map(String.init) else { return SQLITE_OK }
@@ -162,7 +162,7 @@ final class StatementAuthorizer {
                 transactionEffect = .rollbackSavepoint(name)
             }
             return SQLITE_OK
-            
+
         case SQLITE_FUNCTION:
             // SQLite 3.37.2 does not report ALTER TABLE DROP COLUMN with the
             // SQLITE_ALTER_TABLE action code. SQLite 3.38 does.
@@ -180,12 +180,12 @@ final class StatementAuthorizer {
                 invalidatesDatabaseSchemaCache = true
             }
             return SQLITE_OK
-            
+
         default:
             return SQLITE_OK
         }
     }
-    
+
     private func insertUpdateEventKind(tableName: String, columnName: String) {
         for (index, eventKind) in databaseEventKinds.enumerated() {
             if case .update(let t, let columnNames) = eventKind, t == tableName {
@@ -201,7 +201,7 @@ final class StatementAuthorizer {
 
 private struct AuthorizerActionCode: RawRepresentable, CustomStringConvertible {
     let rawValue: CInt
-    
+
     var description: String {
         switch rawValue {
         case 1: return "SQLITE_CREATE_INDEX"
